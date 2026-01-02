@@ -5,6 +5,7 @@ Usage:
   python -m src train_ae
   python -m src gmm --clusters 4 --radius_weight 0.2
   python -m src test
+  python -m src inference
 """
 
 import argparse
@@ -21,8 +22,8 @@ def main():
 
     parser.add_argument(
         "mode",
-        choices=["train_ae", "gmm", "test"],
-        help="train_ae = train autoencoder | gmm = clustering | test = evaluation"
+        choices=["train_ae", "gmm", "test", "inference"],
+        help="train_ae = train autoencoder | gmm = clustering | test = evaluation | inference = run clustering on new images"
     )
 
     parser.add_argument(
@@ -43,10 +44,14 @@ def main():
 
     if args.mode == "train_ae":
         script = os.path.join(SRC_DIR, "autoencoder.py")
+        if not os.path.exists(script):
+            raise FileNotFoundError(f"Autoencoder script not found: {script}")
         subprocess.run([sys.executable, script], check=True)
 
     elif args.mode == "gmm":
         script = os.path.join(SRC_DIR, "cluster_gmm.py")
+        if not os.path.exists(script):
+            raise FileNotFoundError(f"GMM clustering script not found: {script}")
         subprocess.run(
             [
                 sys.executable,
@@ -59,6 +64,14 @@ def main():
 
     elif args.mode == "test":
         script = os.path.join(SRC_DIR, "evaluate_autoencoder.py")
+        if not os.path.exists(script):
+            raise FileNotFoundError(f"Evaluation script not found: {script}")
+        subprocess.run([sys.executable, script], check=True)
+
+    elif args.mode == "inference":
+        script = os.path.join(SRC_DIR, "run_inference.py")
+        if not os.path.exists(script):
+            raise FileNotFoundError(f"Inference script not found: {script}")
         subprocess.run([sys.executable, script], check=True)
 
 
