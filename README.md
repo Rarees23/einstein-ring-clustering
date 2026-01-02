@@ -1,42 +1,135 @@
-Einstein Ring Clustering
+# Euclid Strong Lens Clustering
 
-This project performs unsupervised clustering of Einstein ring images using latent-space embeddings and Gaussian Mixture Models (GMM). All input images are known Einstein rings; the goal is to group them into clusters based on similarity.
+Unsupervised discovery and clustering of strong gravitational lens candidates (Einstein rings) from **Euclid FITS images** using deep latent representations and Gaussian Mixture Models.
 
-Problem
+---
 
-Einstein rings are important astrophysical phenomena caused by strong gravitational lensing. While detection of rings is often studied, this project focuses on grouping pre-identified rings to explore patterns in shape, size, or other features without using labels.
+## Overview
 
-Approach
+This project implements a **research‑grade unsupervised pipeline**:
 
-Feature Extraction - Images are encoded into latent vectors using a convolutional autoencoder. The Einstein radius of each ring is included as a weighted feature to influence clustering.
+1. **Convolutional Autoencoder (CAE)** learns compact latent representations of FITS images, focusing on Einstein ring structures.
+2. **Latent space extraction** converts images into fixed‑length feature vectors.
+3. **Gaussian Mixture Model (GMM)** clusters lenses in latent space, optionally augmented with a physical scalar (Einstein radius / thickness).
+4. **Evaluation & visualization** validate reconstruction quality and inspect cluster composition.
 
-Clustering - Gaussian Mixture Models (GMM) are applied to the latent-space features to form clusters. Clustering is fully unsupervised; no label information is used.
+The design cleanly separates:
 
-Analysis - Cluster assignments are analyzed to explore patterns and variations among rings. Visualizations show representative images from each cluster.
+* reusable ML logic (`src/`)
+* trained models (`saved_models/`)
+* experiment outputs (`results/`)
 
-Project Structure
+---
 
-einstein-ring-clustering/
-├── README.md # Project description
-├── requirements.txt # Python dependencies
-├── data/ # Images or references (not included)
+## Project Structure
+
+```text
+Euclid/
+│
 ├── src/
-│ ├── autoencoder.py # Defines convolutional autoencoder
-│ ├── feature_extraction.py # Generates latent vectors and weighted radius
-│ ├── clustering.py # Runs Gaussian Mixture Model
-│ └── analysis.py # Visualizes and interprets clusters
-└── results/ # Cluster outputs and figures
+│   ├── __main__.py              # CLI entry point
+│   ├── autoencoder.py           # Convolutional autoencoder definition
+│   ├── train_autoencoder.py     # Autoencoder training
+│   ├── gmm_clustering.py        # Latent + radius GMM clustering
+│   ├── test_reconstruction.py   # Reconstruction evaluation & metrics
+│
+├── data/                         # FITS images (not tracked)
+├── saved_models/                 # Trained model weights
+├── results/                      # Clustering outputs, labels, plots
+├── requirements.txt
+└── README.md
+```
 
-Dependencies
+---
 
-Python >= 3.8, numpy, pandas, scikit-learn, torch / tensorflow, matplotlib, seaborn, joblib. Install dependencies with:
+## Data Assumptions
 
+* Images are **FITS files** (`.fits`)
+* Each image is preprocessed to emphasize **ring‑like structures**
+* Optional per‑image scalar files:
+
+  * `einstein_radius.txt` or `normalized_thickness.txt`
+
+Missing scalar values are handled robustly (median imputation).
+
+---
+
+## Installation
+
+```bash
 pip install -r requirements.txt
+```
 
-Usage
+Required libraries include:
 
-Place your Einstein ring images or references in the data/ folder, run feature extraction to create latent vectors and include weighted radius with python src/feature_extraction.py, then run clustering on the extracted features with python src/clustering.py, and finally visualize and analyze the resulting clusters with python src/analysis.py. This sequence reproduces the full pipeline: feature extraction → clustering → visualization.
+* PyTorch
+* scikit‑learn
+* astropy
+* scikit‑image
+* matplotlib
 
-Notes
+---
 
-All images used are Einstein rings; the project does not perform detection. Clustering is unsupervised; results may vary based on hyperparameters. This repository is intended for research and educational purposes.
+## Usage (CLI)
+
+All workflows are exposed via the project entry point.
+
+Run commands **from the project root**:
+
+### Train the autoencoder
+
+```bash
+python -m src train_ae
+```
+
+### Cluster latents with GMM
+
+```bash
+python -m src gmm -k 4 --radius_weight 0.2
+```
+
+### Test reconstructions
+
+```bash
+python -m src test
+```
+
+> `__main__.py` acts as a thin dispatcher so future UIs (GUI / web) can reuse the same logic.
+
+---
+
+## Why This Architecture
+
+* **Unsupervised**: no labels required
+* **Physics‑aware**: optional physical scalars guide clustering
+* **Extensible**: easy to add new clustering methods or features
+* **UI‑ready**: parameters (`k`, weights) already decoupled from logic
+
+---
+
+## Current Status
+
+* Autoencoder training ✔
+* Latent extraction ✔
+* GMM clustering ✔
+* Reconstruction metrics ✔
+* Visualization ✔
+
+Planned:
+
+* Interactive UI (sliders for clusters/weights)
+* Experiment tracking
+* Paper‑ready analysis
+
+---
+
+## Disclaimer
+
+This project is intended for **research and experimentation** with Euclid‑like data and is not an official ESA pipeline.
+
+---
+
+## Author
+
+**Stan Rareș Constantin**
+ICT / Machine Learning
