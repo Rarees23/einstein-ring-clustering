@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Data
+data/
+Train_fits/
+
+# Models
+saved_models/
+*.pth
+
+# Results / outputs
+results/
+*.npy
+*.joblib
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
