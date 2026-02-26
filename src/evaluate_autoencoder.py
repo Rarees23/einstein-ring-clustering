@@ -29,7 +29,7 @@ def load_fits_image(path):
 def preprocess_image(img2d, out_h=IMG_H, out_w=IMG_W):
     img = np.nan_to_num(img2d, nan=0.0, posinf=0.0, neginf=0.0)
     img = np.abs(img)
-    threshold = np.percentile(img, 99)
+    threshold = np.percentile(img, 99.5)  # slightly relaxed clipping
     img[img < threshold] = 0
     max_val = img.max()
     if max_val > 0:
@@ -96,6 +96,7 @@ if len(fits_files) == 0:
 
 all_mse, all_psnr, all_frac = [], [], []
 grid_orig, grid_recon, grid_resid, grid_mask, grid_fnames = [], [], [], [], []
+latent_vectors = []
 
 print(f"{'Image':<30} {'Masked MSE':>10} {'PSNR(dB)':>10} {'Frac Reconst':>13} {'Latent Dim':>12}")
 print("-"*80)
@@ -127,6 +128,7 @@ for idx, path in enumerate(tqdm(fits_files, desc="Testing FITS")):
     all_mse.append(mse_masked)
     all_psnr.append(psnr_masked)
     all_frac.append(frac)
+    latent_vectors.append(latent_vector)
 
     if idx < SHOW_FIRST_N:
         grid_orig.append(orig)
@@ -137,6 +139,18 @@ for idx, path in enumerate(tqdm(fits_files, desc="Testing FITS")):
 
 if grid_orig:
     show_comparison_grid(grid_orig, grid_recon, grid_resid, grid_mask, grid_fnames)
+
+# ---------------- Latent Sanity Checks ----------------
+latent_vectors = np.stack(latent_vectors)
+latent_std_per_dim = latent_vectors.std(axis=0)
+latent_mean_per_dim = latent_vectors.mean(axis=0)
+
+print("\n--- Latent Space Sanity Check ---")
+print(f"Latent shape (num_images x dim): {latent_vectors.shape}")
+print(f"Global latent mean: {latent_vectors.mean():.6f}")
+print(f"Global latent std: {latent_vectors.std():.6f}")
+print(f"Mean per-dim std: {latent_std_per_dim.mean():.6f}")
+print(f"Min/Max per-dim std: {latent_std_per_dim.min():.6f}/{latent_std_per_dim.max():.6f}")
 
 # ---------------- Summary ----------------
 print("\nSummary Statistics for all images:")

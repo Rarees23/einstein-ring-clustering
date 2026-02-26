@@ -1,39 +1,43 @@
-#!/usr/bin/env python3
-"""
-Predict clusters for new Einstein ring images using the trained GMM
-and display results with radius info. Ensures all clusters are populated.
-"""
-
 import os, glob, joblib
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from astropy.io import fits
 from skimage.transform import resize
-import matplotlib.pyplot as plt
-from tqdm import tqdm
+import streamlit as st
 
 from ConvolutionalAutoencoder import ConvAutoencoder
-from config import SAVED_MODELS_DIR, DATA_DIR, LATENT_DIM, IN_CHANNELS, IMG_H, IMG_W, BATCH_SIZE, DEVICE, RESULTS_DIR
+from config import (
+    SAVED_MODELS_DIR, DATA_DIR, LATENT_DIM, IN_CHANNELS,
+    IMG_H, IMG_W, BATCH_SIZE, DEVICE, RESULTS_DIR
+)
+
+# ---------------- STREAMLIT SETUP ----------------
+st.set_page_config(layout="wide")
+st.title("Einstein Ring Clusters")
+
+st.sidebar.title("Startup Configuration")
+
+DATA_PATH = st.sidebar.text_input(
+    "Path to FITS data folder",
+    value=DATA_DIR,
+    help="Absolute or relative path to the folder containing FITS images"
+)
+
+if not os.path.isdir(DATA_PATH):
+    st.error("Invalid data folder path")
+    st.stop()
 
 # ---------------- PATHS ----------------
 BEST_MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "best_model.pth")
 GMM_OUTPUT_DIR = os.path.join(RESULTS_DIR, "gmm_output")
 SCALER_PATH = os.path.join(GMM_OUTPUT_DIR, "scaler_latent.joblib")
 GMM_MODEL_PATH = os.path.join(GMM_OUTPUT_DIR, "gmm_model.joblib")
+GMM_META_PATH = os.path.join(GMM_OUTPUT_DIR, "gmm_meta.joblib")
 
 # ---------------- HELPERS ----------------
-def find_fits_and_radius(root):
-    fits_paths = sorted(glob.glob(os.path.join(root, "**/*.fits"), recursive=True))
-    return [(f, os.path.join(os.path.dirname(f), "einstein_radius.txt")) for f in fits_paths]
-
-def load_radius(path):
-    if not os.path.exists(path):
-        return np.nan
-    try:
-        return float(open(path).read().strip().split()[0])
-    except:
-        return np.nan
+def find_fits(root):
+    return sorted(glob.glob(os.path.join(root, "**/*.fits"), recursive=True))
 
 def load_fits_image(path):
     with fits.open(path, memmap=False) as hdul:
@@ -43,101 +47,119 @@ def load_fits_image(path):
             data = data[idx + (slice(None), slice(None))]
         return np.squeeze(data).astype(np.float32)
 
-def preprocess_image(img, out_h=IMG_H, out_w=IMG_W):
+def preprocess_image(img):
     img = np.nan_to_num(img, nan=0.0)
     img = np.abs(img)
+
     threshold = np.percentile(img, 99)
     img[img < threshold] = 0
+
     if img.max() > 0:
         img /= img.max()
-    if (img.shape[0], img.shape[1]) != (out_h, out_w):
-        img = resize(img, (out_h, out_w), preserve_range=True, anti_aliasing=True)
+
+    if img.shape != (IMG_H, IMG_W):
+        img = resize(
+            img,
+            (IMG_H, IMG_W),
+            preserve_range=True,
+            anti_aliasing=True
+        )
+
     return np.expand_dims(img.astype(np.float32), axis=0)
 
-# ---------------- LOAD DATA ----------------
-pairs = find_fits_and_radius(DATA_DIR)
-images, radii, filenames, folders = [], [], [], []
+# ---------------- CACHE: LOAD DATA ----------------
+@st.cache_data(show_spinner=True)
+def load_all_images(data_dir):
+    fits_files = find_fits(data_dir)
 
-for fpath, rpath in tqdm(pairs, desc="Loading images"):
-    try:
-        images.append(preprocess_image(load_fits_image(fpath)))
-        folders.append(os.path.basename(os.path.dirname(fpath)))
-        filenames.append(os.path.basename(fpath))
-        radii.append(load_radius(rpath))
-    except Exception as e:
-        print(f"Skipping {fpath}: {e}")
+    images, filenames, folders = [], [], []
 
-images = np.array(images, dtype=np.float32)
-radii = np.array(radii, dtype=float)
-radii[np.isnan(radii)] = np.nanmedian(radii)
+    for fpath in fits_files:
+        try:
+            images.append(preprocess_image(load_fits_image(fpath)))
+            filenames.append(os.path.basename(fpath))
+            folders.append(os.path.basename(os.path.dirname(fpath)))
+        except:
+            continue
 
-# ---------------- LOAD MODEL ----------------
-model = ConvAutoencoder(in_channels=IN_CHANNELS, latent_dim=LATENT_DIM).to(DEVICE)
-model.load_state_dict(torch.load(BEST_MODEL_PATH, map_location=DEVICE))
-model.eval()
+    images = np.array(images, dtype=np.float32)
+    return images, filenames, folders
 
-scaler_latent = joblib.load(SCALER_PATH)
-gmm = joblib.load(GMM_MODEL_PATH)
-K = gmm.n_components
+# ---------------- CACHE: LATENTS + CLUSTERS ----------------
+@st.cache_data(show_spinner=True)
+def compute_clusters(images):
+    model = ConvAutoencoder(
+        in_channels=IN_CHANNELS,
+        latent_dim=LATENT_DIM
+    ).to(DEVICE)
 
-# ---------------- EXTRACT LATENTS ----------------
-ds = TensorDataset(torch.tensor(images, dtype=torch.float32))
-loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False)
-latents = []
+    model.load_state_dict(torch.load(BEST_MODEL_PATH, map_location=DEVICE))
+    model.eval()
 
-with torch.no_grad():
-    for (x,) in loader:
-        x = x.to(DEVICE)
-        z = model.encoder(x)
-        if z.ndim == 4:
-            z = z.mean(axis=(2,3))
-        elif z.ndim > 2:
-            z = z.reshape(z.shape[0], LATENT_DIM)
-        latents.append(z.cpu().numpy())
+    scaler_latent = joblib.load(SCALER_PATH)
+    gmm = joblib.load(GMM_MODEL_PATH)
+    meta = joblib.load(GMM_META_PATH) if os.path.exists(GMM_META_PATH) else {}
+    latent_amplify = float(meta.get("latent_amplify", 1.0))
+    empty_percentile = meta.get("empty_percentile", None)
 
-latents = np.vstack(latents)
+    is_empty = None
+    if empty_percentile is not None:
+        signal = images.sum(axis=(1, 2, 3))
+        threshold = np.percentile(signal, float(empty_percentile))
+        is_empty = signal <= threshold
 
-# ---------------- COMBINE FEATURES ----------------
-Z_scaled = scaler_latent.transform(latents)
-r_scaled = (radii - radii.min()) / (radii.max() - radii.min() + 1e-12)
-X_aug = np.hstack([Z_scaled, r_scaled.reshape(-1,1)])
+    ds = TensorDataset(torch.tensor(images))
+    loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False)
 
-# ---------------- PREDICT ----------------
-probs = gmm.predict_proba(X_aug)
-labels = np.argmax(probs, axis=1)
+    latents = []
+    with torch.no_grad():
+        for (x,) in loader:
+            x = x.to(DEVICE)
+            z = model.encoder(x)
 
-# ---------------- FORCE ALL CLUSTERS POPULATED ----------------
-unique_labels = set(labels)
-for c in range(K):
-    if c not in unique_labels:
-        # Assign the farthest point from cluster mean to this empty cluster
-        dists = np.linalg.norm(X_aug - gmm.means_[c], axis=1)
-        idx = np.argmax(dists)
-        labels[idx] = c
-        unique_labels.add(c)
+            if z.ndim == 4:
+                z = z.mean(dim=(2, 3))
+            else:
+                z = z.view(z.shape[0], LATENT_DIM)
 
-# ---------------- DISPLAY ----------------
-for fn, folder, r, label, latent in zip(filenames, folders, radii, labels, latents):
-    print(f"Image: {fn}")
-    print(f"  Folder: {folder}")
-    print(f"  Radius: {r:.6f}")
-    print(f"  Cluster label: {label}")
-    print(f"  Latent norm: {np.linalg.norm(latent):.4f}\n")
+            latents.append(z.cpu().numpy())
 
-# ---------------- VISUALIZE CLUSTERS ----------------
-def show_clusters(images, labels, folders, radii, max_per_cluster=30, images_per_row=6):
-    for c in np.unique(labels):
-        idxs = np.where(labels==c)[0][:max_per_cluster]
-        if len(idxs)==0: continue
-        n_rows = int(np.ceil(len(idxs)/images_per_row))
-        plt.figure(figsize=(images_per_row*2, n_rows*2))
-        plt.suptitle(f"Cluster {c}", fontsize=16)
-        for i, idx in enumerate(idxs):
-            plt.subplot(n_rows, images_per_row, i+1)
-            plt.imshow(images[idx][0], origin='lower', cmap='inferno')
-            plt.title(f"{folders[idx]} | r={radii[idx]:.3f}", fontsize=8)
-            plt.axis('off')
-        plt.tight_layout(rect=[0,0,1,0.95])
-        plt.show()
+    latents = np.vstack(latents)
 
-show_clusters(images, labels, folders, radii)
+    if is_empty is None:
+        Z_scaled = scaler_latent.transform(latents) * latent_amplify
+        labels = gmm.predict(Z_scaled)
+    else:
+        labels = np.full(latents.shape[0], -1, dtype=int)
+        latents_nonempty = latents[~is_empty]
+        Z_scaled = scaler_latent.transform(latents_nonempty) * latent_amplify
+        labels[~is_empty] = gmm.predict(Z_scaled)
+
+    unique = np.unique(labels[labels != -1])
+    remap = {old: new for new, old in enumerate(unique)}
+    labels_mapped = np.array([remap[l] if l != -1 else -1 for l in labels])
+
+    return labels_mapped
+
+# ---------------- LOAD + COMPUTE ----------------
+with st.spinner("Loading data and computing clusters..."):
+    images, filenames, folders = load_all_images(DATA_PATH)
+    labels_mapped = compute_clusters(images)
+
+# ---------------- UI ----------------
+st.sidebar.title("Cluster Selection")
+clusters = np.unique(labels_mapped)
+cluster_choice = st.sidebar.selectbox("Choose cluster", clusters)
+
+selected_idxs = np.where(labels_mapped == cluster_choice)[0]
+
+cols = st.columns(6)
+for i, idx in enumerate(selected_idxs):
+    col = cols[i % 6]
+    col.image(
+        images[idx][0],
+        width=120,
+        clamp=True,
+        channels="GRAY"
+    )
+    col.caption(f"{filenames[idx]}")

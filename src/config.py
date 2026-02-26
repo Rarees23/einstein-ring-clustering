@@ -22,7 +22,7 @@ IMG_H, IMG_W = 128, 128
 IN_CHANNELS = 1
 LATENT_DIM = 64
 BATCH_SIZE = 32
-NUM_EPOCHS = 50
+NUM_EPOCHS = 35
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ---------------- AUTOENCODER ----------------

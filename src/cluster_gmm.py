@@ -1,38 +1,36 @@
-import os, glob, joblib
+import os, glob, joblib, argparse
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from astropy.io import fits
 from skimage.transform import resize
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import BayesianGaussianMixture
 from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
 from tqdm import tqdm
 
 from ConvolutionalAutoencoder import ConvAutoencoder
 from config import DATA_DIR, SAVED_MODELS_DIR, RESULTS_DIR, IMG_H, IMG_W, IN_CHANNELS, LATENT_DIM, BATCH_SIZE, DEVICE
 
-# ---------------- SETTINGS ----------------
-K = 4  # number of clusters
-LATENT_AMPLIFY = 5.0  # amplify small differences in latent space
-RADIUS_WEIGHT = 0.2  # weight for Einstein radius feature
+# ---------------- ARGUMENTS ----------------
+parser = argparse.ArgumentParser(description="Adaptive GMM clustering on Einstein ring latent vectors")
+parser.add_argument("--max_clusters", type=int, default=50, help="Maximum number of clusters for Bayesian GMM")
+parser.add_argument("--latent_amplify", type=float, default=5.0, help="Amplify latent differences")
+parser.add_argument("--empty_percentile", type=float, default=15.0, help="Percentile used to detect empty images")
+args = parser.parse_args()
 
+MAX_CLUSTERS = args.max_clusters
+LATENT_AMPLIFY = args.latent_amplify
+EMPTY_PERC = args.empty_percentile
+
+# ---------------- OUTPUT ----------------
 OUT_DIR = os.path.join(RESULTS_DIR, "gmm_output")
 os.makedirs(OUT_DIR, exist_ok=True)
 BEST_MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "best_model.pth")
+META_PATH = os.path.join(OUT_DIR, "gmm_meta.joblib")
 
 # ---------------- HELPERS ----------------
-def find_fits_and_radius(root):
-    fits_paths = sorted(glob.glob(os.path.join(root, "**/*.fits"), recursive=True))
-    return [(f, os.path.join(os.path.dirname(f), "einstein_radius.txt")) for f in fits_paths]
-
-def load_radius(path):
-    if not os.path.exists(path):
-        return np.nan
-    try:
-        return float(open(path).read().strip().split()[0])
-    except:
-        return np.nan
+def find_fits(root):
+    return sorted(glob.glob(os.path.join(root, "**/*.fits"), recursive=True))
 
 def load_fits_image(path):
     with fits.open(path, memmap=False) as hdul:
@@ -54,20 +52,23 @@ def preprocess_image(img, out_h=IMG_H, out_w=IMG_W):
     return np.expand_dims(img.astype(np.float32), axis=0)
 
 # ---------------- LOAD DATA ----------------
-pairs = find_fits_and_radius(DATA_DIR)
-images, radii, filenames = [], [], []
+fits_files = find_fits(DATA_DIR)
+images, filenames = [], []
 
-for fpath, rpath in tqdm(pairs, desc="Loading images"):
+for f in tqdm(fits_files, desc="Loading images"):
     try:
-        images.append(preprocess_image(load_fits_image(fpath)))
-        radii.append(load_radius(rpath))
-        filenames.append(os.path.basename(fpath))
+        images.append(preprocess_image(load_fits_image(f)))
+        filenames.append(os.path.basename(f))
     except Exception as e:
-        print(f"Skipping {fpath}: {e}")
+        print(f"Skipping {f}: {e}")
 
 images = np.array(images, dtype=np.float32)
-radii = np.array(radii, dtype=float)
-radii[np.isnan(radii)] = np.nanmedian(radii)
+
+# ---------------- EMPTY IMAGE DETECTION ----------------
+signal = images.sum(axis=(1,2,3))
+threshold = np.percentile(signal, EMPTY_PERC)
+is_empty = signal <= threshold
+print(f"Empty images detected: {is_empty.sum()} / {len(images)}")
 
 # ---------------- LOAD AUTOENCODER ----------------
 model = ConvAutoencoder(in_channels=IN_CHANNELS, latent_dim=LATENT_DIM).to(DEVICE)
@@ -77,48 +78,58 @@ model.eval()
 # ---------------- EXTRACT LATENTS ----------------
 ds = TensorDataset(torch.tensor(images, dtype=torch.float32))
 loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False)
-latents = []
 
+latents = []
 with torch.no_grad():
     for (x,) in loader:
         x = x.to(DEVICE)
         z = model.encoder(x)
-        if z.ndim == 4:
-            z = z.mean(axis=(2,3))
-        elif z.ndim > 2:
-            z = z.reshape(z.shape[0], LATENT_DIM)
+        z = z.mean(dim=(2,3)) if z.ndim == 4 else z
         latents.append(z.cpu().numpy())
 
 latents = np.vstack(latents)
 
+# ---------------- SELECT NON-EMPTY ----------------
+latents_nonempty = latents[~is_empty]
+
 # ---------------- SCALE & AMPLIFY LATENTS ----------------
 scaler_latent = StandardScaler()
-Z_scaled = scaler_latent.fit_transform(latents) * LATENT_AMPLIFY
+Z_scaled = scaler_latent.fit_transform(latents_nonempty) * LATENT_AMPLIFY
 
-# ---------------- SCALE RADIUS ----------------
-r_scaled = (radii - radii.min()) / (radii.max() - radii.min() + 1e-12)
-radius_feature = (RADIUS_WEIGHT * r_scaled).reshape(-1,1)
+# ---------------- BAYESIAN GMM ----------------
+bgmm = BayesianGaussianMixture(
+    n_components=MAX_CLUSTERS,
+    covariance_type="full",
+    weight_concentration_prior_type='dirichlet_process',
+    weight_concentration_prior=1e-2,
+    max_iter=1000,
+    random_state=42
+)
+bgmm.fit(Z_scaled)
+labels_nonempty = bgmm.predict(Z_scaled)
 
-# ---------------- COMBINE FEATURES ----------------
-X_aug = np.hstack([Z_scaled, radius_feature])
-
-# ---------------- INITIALIZE GMM with k-means ----------------
-kmeans_init = KMeans(n_clusters=K, random_state=42).fit(X_aug)
-gmm = GaussianMixture(n_components=K, covariance_type="full", random_state=42, n_init=1, init_params='kmeans')
-gmm.means_init = kmeans_init.cluster_centers_
-gmm.fit(X_aug)
-
-labels = gmm.predict(X_aug)
+# ---------------- MERGE LABELS ----------------
+labels = np.full(len(images), -1, dtype=int) 
+labels[~is_empty] = labels_nonempty
 
 # ---------------- CHECK CLUSTER SIZES ----------------
 unique, counts = np.unique(labels, return_counts=True)
-print("Cluster sizes:", dict(zip(unique, counts)))
+print("Final cluster sizes:", dict(zip(unique, counts)))
+print("Note: cluster -1 = EMPTY")
 
 # ---------------- SAVE ----------------
-joblib.dump(gmm, os.path.join(OUT_DIR, "gmm_model.joblib"))
+joblib.dump(bgmm, os.path.join(OUT_DIR, "gmm_model.joblib"))
 joblib.dump(scaler_latent, os.path.join(OUT_DIR, "scaler_latent.joblib"))
+joblib.dump(
+    {
+        "latent_amplify": float(LATENT_AMPLIFY),
+        "empty_percentile": float(EMPTY_PERC),
+        "latent_dim": int(LATENT_DIM),
+    },
+    META_PATH,
+)
 np.save(os.path.join(OUT_DIR, "latents.npy"), latents)
-np.save(os.path.join(OUT_DIR, "radii.npy"), radii)
 np.save(os.path.join(OUT_DIR, "labels.npy"), labels)
 
-print("GMM training complete. 4 clusters populated.")
+print("Bayesian GMM clustering complete. Empty images = -1, max clusters =", MAX_CLUSTERS)
+print(Z_scaled.mean(), Z_scaled.std())
