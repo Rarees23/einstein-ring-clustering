@@ -27,15 +27,17 @@ The design cleanly separates:
 Euclid/
 │
 ├── src/
-│   ├── __main__.py              # CLI entry point
-│   ├── autoencoder.py           # Convolutional autoencoder definition
-│   ├── train_autoencoder.py     # Autoencoder training
-│   ├── gmm_clustering.py        # Latent + radius GMM clustering
-│   ├── test_reconstruction.py   # Reconstruction evaluation & metrics
+│   ├── __main__.py              # CLI entry point / dispatcher
+│   ├── autoencoder.py           # Convolutional autoencoder + training loop
+│   ├── cluster_gmm.py           # Bayesian GMM clustering in latent space
+│   ├── evaluate_autoencoder.py  # Reconstruction evaluation & metrics
+│   ├── visualize_clusters.py    # 2D PCA visualization of latent clusters
+│   ├── preprocess.py            # Shared FITS loading & preprocessing
+│   ├── run_inference.py         # Streamlit UI for interactive cluster browsing
 │
-├── data/                         # FITS images (not tracked)
-├── saved_models/                 # Trained model weights
-├── results/                      # Clustering outputs, labels, plots
+├── data/                        # FITS images (not tracked)
+├── saved_models/                # Trained model weights
+├── results/                     # Clustering outputs, labels, plots
 ├── requirements.txt
 └── README.md
 ```
@@ -82,16 +84,37 @@ Run commands **from the project root**:
 python -m src train_ae
 ```
 
-### Cluster latents with GMM
+### Cluster latents with Bayesian GMM
 
 ```bash
-python -m src gmm -k 4 --radius_weight 0.2
+python -m src gmm \
+  --max_clusters 50 \
+  --latent_amplify 5.0 \
+  --empty_percentile 15.0
 ```
+
+Flags:
+
+- **--max_clusters**: maximum number of mixture components (Dirichlet process prior prunes unused ones)
+- **--latent_amplify**: global scaling factor for latent space before clustering
+- **--empty_percentile**: percentile over total image flux used to tag "empty" images (label `-1`)
 
 ### Test reconstructions
 
 ```bash
 python -m src test
+```
+
+### Interactive clustering UI (Streamlit)
+
+```bash
+python -m src inference
+```
+
+or equivalently:
+
+```bash
+streamlit run src/run_inference.py
 ```
 
 > `__main__.py` acts as a thin dispatcher so future UIs (GUI / web) can reuse the same logic.
@@ -103,7 +126,7 @@ python -m src test
 * **Unsupervised**: no labels required
 * **Physics‑aware**: optional physical scalars guide clustering
 * **Extensible**: easy to add new clustering methods or features
-* **UI‑ready**: parameters (`k`, weights) already decoupled from logic
+* **UI‑ready**: clustering hyperparameters (`max_clusters`, `latent_amplify`, etc.) are decoupled from core logic
 
 ---
 

@@ -1,9 +1,7 @@
-import os, glob, joblib
+import os, joblib
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from astropy.io import fits
-from skimage.transform import resize
 import streamlit as st
 
 from ConvolutionalAutoencoder import ConvAutoencoder
@@ -11,6 +9,7 @@ from config import (
     SAVED_MODELS_DIR, DATA_DIR, LATENT_DIM, IN_CHANNELS,
     IMG_H, IMG_W, BATCH_SIZE, DEVICE, RESULTS_DIR
 )
+from preprocess import find_fits, load_fits_image, preprocess_image
 
 # ---------------- STREAMLIT SETUP ----------------
 st.set_page_config(layout="wide")
@@ -35,38 +34,6 @@ SCALER_PATH = os.path.join(GMM_OUTPUT_DIR, "scaler_latent.joblib")
 GMM_MODEL_PATH = os.path.join(GMM_OUTPUT_DIR, "gmm_model.joblib")
 GMM_META_PATH = os.path.join(GMM_OUTPUT_DIR, "gmm_meta.joblib")
 
-# ---------------- HELPERS ----------------
-def find_fits(root):
-    return sorted(glob.glob(os.path.join(root, "**/*.fits"), recursive=True))
-
-def load_fits_image(path):
-    with fits.open(path, memmap=False) as hdul:
-        data = hdul[0].data
-        if data.ndim > 2:
-            idx = tuple(0 for _ in range(data.ndim - 2))
-            data = data[idx + (slice(None), slice(None))]
-        return np.squeeze(data).astype(np.float32)
-
-def preprocess_image(img):
-    img = np.nan_to_num(img, nan=0.0)
-    img = np.abs(img)
-
-    threshold = np.percentile(img, 99)
-    img[img < threshold] = 0
-
-    if img.max() > 0:
-        img /= img.max()
-
-    if img.shape != (IMG_H, IMG_W):
-        img = resize(
-            img,
-            (IMG_H, IMG_W),
-            preserve_range=True,
-            anti_aliasing=True
-        )
-
-    return np.expand_dims(img.astype(np.float32), axis=0)
-
 # ---------------- CACHE: LOAD DATA ----------------
 @st.cache_data(show_spinner=True)
 def load_all_images(data_dir):
@@ -76,7 +43,8 @@ def load_all_images(data_dir):
 
     for fpath in fits_files:
         try:
-            images.append(preprocess_image(load_fits_image(fpath)))
+            raw = load_fits_image(fpath)
+            images.append(preprocess_image(raw))
             filenames.append(os.path.basename(fpath))
             folders.append(os.path.basename(os.path.dirname(fpath)))
         except:

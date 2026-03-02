@@ -1,43 +1,24 @@
 import os
-import glob
 import numpy as np
 import torch
-from astropy.io import fits
-from skimage.transform import resize
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from ConvolutionalAutoencoder import ConvAutoencoder
-from config import DATA_DIR, SAVED_MODELS_DIR, IMG_H, IMG_W, IN_CHANNELS, LATENT_DIM, DEVICE, RECON_THRESHOLD, SHOW_FIRST_N
+from config import (
+    DATA_DIR, SAVED_MODELS_DIR, IMG_H, IMG_W, IN_CHANNELS, LATENT_DIM, DEVICE,
+    RECON_THRESHOLD, SHOW_FIRST_N, EVAL_OUTPUT_DIR,
+)
+from preprocess import find_fits, load_fits_image, preprocess_image
 
 # ---------------- PATHS ----------------
 MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "best_model.pth")
 TEST_DIR = DATA_DIR
+SHOW_WORST_N = 5
 
-# ---------------- Helpers ----------------
-def find_fits_files(root):
-    return sorted(glob.glob(os.path.join(root, "**/*.fits"), recursive=True))
-
-def load_fits_image(path):
-    with fits.open(path, memmap=False) as hdul:
-        data = hdul[0].data
-        if data.ndim > 2:
-            idx = tuple(0 for _ in range(data.ndim - 2))
-            data = data[idx + (slice(None), slice(None))]
-        return np.squeeze(data).astype(np.float32)
-
-def preprocess_image(img2d, out_h=IMG_H, out_w=IMG_W):
-    img = np.nan_to_num(img2d, nan=0.0, posinf=0.0, neginf=0.0)
-    img = np.abs(img)
-    threshold = np.percentile(img, 99.5)  # slightly relaxed clipping
-    img[img < threshold] = 0
-    max_val = img.max()
-    if max_val > 0:
-        img = img / max_val
-    if (img.shape[0], img.shape[1]) != (out_h, out_w):
-        img = resize(img, (out_h, out_w), preserve_range=True, anti_aliasing=True)
-    return np.expand_dims(img.astype(np.float32), axis=0)
-
+# ---------------- Metrics ----------------
 def masked_mse(output, target, mask_thresh=0.01):
     mask = (target > mask_thresh)
     if mask.sum() == 0:
@@ -55,31 +36,37 @@ def fraction_reconstructed(output, target, recon_thresh=RECON_THRESHOLD, mask_th
     recon_hits = ((output > recon_thresh) & mask).sum()
     return float(recon_hits) / float(mask.sum())
 
-def show_comparison_grid(orig_list, recon_list, residual_list, mask_list, filenames):
+def show_comparison_grid(orig_list, recon_list, residual_list, mask_list, filenames, title_suffix="", save_path=None):
     n = len(orig_list)
-    fig, axes = plt.subplots(n, 4, figsize=(12, 3*n))
+    fig, axes = plt.subplots(n, 4, figsize=(12, 3 * n))
     if n == 1:
         axes = axes[np.newaxis, :]
     for i in range(n):
         vmax = max(orig_list[i].max(), recon_list[i].max())
-        axes[i,0].imshow(orig_list[i], origin='lower', vmin=0, vmax=vmax)
-        axes[i,0].set_title(f"{filenames[i]}\nOriginal")
-        axes[i,0].axis('off')
-        
-        axes[i,1].imshow(recon_list[i], origin='lower', vmin=0, vmax=vmax)
-        axes[i,1].set_title("Reconstruction")
-        axes[i,1].axis('off')
-        
-        axes[i,2].imshow(residual_list[i], origin='lower')
-        axes[i,2].set_title("Residual")
-        axes[i,2].axis('off')
-        
-        axes[i,3].imshow(orig_list[i], origin='lower', vmin=0, vmax=vmax)
-        axes[i,3].imshow(mask_list[i], origin='lower', alpha=0.4, cmap='Reds')
-        axes[i,3].set_title("Mask overlay")
-        axes[i,3].axis('off')
+        axes[i, 0].imshow(orig_list[i], origin="lower", vmin=0, vmax=vmax)
+        axes[i, 0].set_title(f"{filenames[i]}\nOriginal")
+        axes[i, 0].axis("off")
+
+        axes[i, 1].imshow(recon_list[i], origin="lower", vmin=0, vmax=vmax)
+        axes[i, 1].set_title("Reconstruction")
+        axes[i, 1].axis("off")
+
+        axes[i, 2].imshow(residual_list[i], origin="lower")
+        axes[i, 2].set_title("Residual")
+        axes[i, 2].axis("off")
+
+        axes[i, 3].imshow(orig_list[i], origin="lower", vmin=0, vmax=vmax)
+        axes[i, 3].imshow(mask_list[i], origin="lower", alpha=0.4, cmap="Reds")
+        axes[i, 3].set_title("Mask overlay")
+        axes[i, 3].axis("off")
+    if title_suffix:
+        fig.suptitle(title_suffix, fontsize=12)
     plt.tight_layout()
-    plt.show()
+    if save_path:
+        plt.savefig(save_path, dpi=120, bbox_inches="tight")
+        plt.close()
+    else:
+        plt.show()
 
 # ---------------- Load Model ----------------
 if not os.path.exists(MODEL_PATH):
@@ -90,16 +77,18 @@ model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
 
 # ---------------- Test Files ----------------
-fits_files = find_fits_files(TEST_DIR)
+fits_files = find_fits(TEST_DIR)
 if len(fits_files) == 0:
     raise RuntimeError(f"No FITS files found in {TEST_DIR}")
 
 all_mse, all_psnr, all_frac = [], [], []
+all_paths = []
 grid_orig, grid_recon, grid_resid, grid_mask, grid_fnames = [], [], [], [], []
+worst_orig, worst_recon, worst_resid, worst_mask, worst_fnames = [], [], [], [], []
 latent_vectors = []
 
 print(f"{'Image':<30} {'Masked MSE':>10} {'PSNR(dB)':>10} {'Frac Reconst':>13} {'Latent Dim':>12}")
-print("-"*80)
+print("-" * 80)
 
 for idx, path in enumerate(tqdm(fits_files, desc="Testing FITS")):
     try:
@@ -128,6 +117,7 @@ for idx, path in enumerate(tqdm(fits_files, desc="Testing FITS")):
     all_mse.append(mse_masked)
     all_psnr.append(psnr_masked)
     all_frac.append(frac)
+    all_paths.append(path)
     latent_vectors.append(latent_vector)
 
     if idx < SHOW_FIRST_N:
@@ -137,13 +127,57 @@ for idx, path in enumerate(tqdm(fits_files, desc="Testing FITS")):
         grid_mask.append(mask)
         grid_fnames.append(os.path.basename(path))
 
+# ---------------- Worst by MSE ----------------
+if len(all_mse) >= SHOW_WORST_N:
+    worst_indices = np.argsort(all_mse)[-SHOW_WORST_N:][::-1]
+    for i in worst_indices:
+        path = all_paths[i]
+        raw = load_fits_image(path)
+        proc = preprocess_image(raw)
+        tensor = torch.tensor(proc[None], dtype=torch.float32).to(DEVICE)
+        with torch.no_grad():
+            recon = model(tensor).squeeze(0).cpu().numpy()
+        orig = proc[0]
+        recon_img = recon[0]
+        _, mask = masked_mse(recon_img, orig)
+        residual = np.abs(orig - recon_img)
+        worst_orig.append(orig)
+        worst_recon.append(recon_img)
+        worst_resid.append(residual)
+        worst_mask.append(mask)
+        worst_fnames.append(f"{os.path.basename(path)} (MSE={all_mse[i]:.4f})")
+
+# ---------------- Save metrics ----------------
+os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
+metrics_path = os.path.join(EVAL_OUTPUT_DIR, "eval_metrics.npz")
+np.savez(
+    metrics_path,
+    paths=np.array(all_paths, dtype=object),
+    mse=np.array(all_mse),
+    psnr=np.array(all_psnr),
+    frac_reconstructed=np.array(all_frac),
+    latent_vectors=np.stack(latent_vectors),
+)
+print(f"\nMetrics saved to {metrics_path}")
+
+# ---------------- Plots ----------------
 if grid_orig:
-    show_comparison_grid(grid_orig, grid_recon, grid_resid, grid_mask, grid_fnames)
+    show_comparison_grid(
+        grid_orig, grid_recon, grid_resid, grid_mask, grid_fnames,
+        title_suffix="First N samples",
+        save_path=os.path.join(EVAL_OUTPUT_DIR, "eval_first_n.png"),
+    )
+if worst_orig:
+    show_comparison_grid(
+        worst_orig, worst_recon, worst_resid, worst_mask, worst_fnames,
+        title_suffix="Worst N by masked MSE",
+        save_path=os.path.join(EVAL_OUTPUT_DIR, "eval_worst_n.png"),
+    )
+    print(f"Plots saved to {EVAL_OUTPUT_DIR}")
 
 # ---------------- Latent Sanity Checks ----------------
 latent_vectors = np.stack(latent_vectors)
 latent_std_per_dim = latent_vectors.std(axis=0)
-latent_mean_per_dim = latent_vectors.mean(axis=0)
 
 print("\n--- Latent Space Sanity Check ---")
 print(f"Latent shape (num_images x dim): {latent_vectors.shape}")

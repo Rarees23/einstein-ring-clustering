@@ -2,14 +2,13 @@ import os, glob, joblib, argparse
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from astropy.io import fits
-from skimage.transform import resize
 from sklearn.mixture import BayesianGaussianMixture
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 from ConvolutionalAutoencoder import ConvAutoencoder
 from config import DATA_DIR, SAVED_MODELS_DIR, RESULTS_DIR, IMG_H, IMG_W, IN_CHANNELS, LATENT_DIM, BATCH_SIZE, DEVICE
+from preprocess import find_fits, load_fits_image, preprocess_image
 
 # ---------------- ARGUMENTS ----------------
 parser = argparse.ArgumentParser(description="Adaptive GMM clustering on Einstein ring latent vectors")
@@ -28,36 +27,14 @@ os.makedirs(OUT_DIR, exist_ok=True)
 BEST_MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "best_model.pth")
 META_PATH = os.path.join(OUT_DIR, "gmm_meta.joblib")
 
-# ---------------- HELPERS ----------------
-def find_fits(root):
-    return sorted(glob.glob(os.path.join(root, "**/*.fits"), recursive=True))
-
-def load_fits_image(path):
-    with fits.open(path, memmap=False) as hdul:
-        data = hdul[0].data
-        if data.ndim > 2:
-            idx = tuple(0 for _ in range(data.ndim - 2))
-            data = data[idx + (slice(None), slice(None))]
-        return np.squeeze(data).astype(np.float32)
-
-def preprocess_image(img, out_h=IMG_H, out_w=IMG_W):
-    img = np.nan_to_num(img, nan=0.0)
-    img = np.abs(img)
-    threshold = np.percentile(img, 99)
-    img[img < threshold] = 0
-    if img.max() > 0:
-        img /= img.max()
-    if (img.shape[0], img.shape[1]) != (out_h, out_w):
-        img = resize(img, (out_h, out_w), preserve_range=True, anti_aliasing=True)
-    return np.expand_dims(img.astype(np.float32), axis=0)
-
 # ---------------- LOAD DATA ----------------
 fits_files = find_fits(DATA_DIR)
 images, filenames = [], []
 
 for f in tqdm(fits_files, desc="Loading images"):
     try:
-        images.append(preprocess_image(load_fits_image(f)))
+        raw = load_fits_image(f)
+        images.append(preprocess_image(raw))
         filenames.append(os.path.basename(f))
     except Exception as e:
         print(f"Skipping {f}: {e}")
@@ -102,6 +79,7 @@ bgmm = BayesianGaussianMixture(
     covariance_type="full",
     weight_concentration_prior_type='dirichlet_process',
     weight_concentration_prior=1e-2,
+    reg_covar=1e-6,
     max_iter=1000,
     random_state=42
 )

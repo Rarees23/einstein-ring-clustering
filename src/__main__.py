@@ -3,7 +3,7 @@ Entry point for the Euclid strong lens project.
 
 Usage:
   python -m src train_ae
-  python -m src gmm --clusters 4 --radius_weight 0.2
+  python -m src gmm [--max_clusters 50] [--latent_amplify 5.0] [--empty_percentile 15.0]
   python -m src test
   python -m src inference
 """
@@ -26,19 +26,9 @@ def main():
         help="train_ae = train autoencoder | gmm = clustering | test = evaluation | inference = run clustering on new images"
     )
 
-    parser.add_argument(
-        "--clusters", "-k",
-        type=int,
-        default=4,
-        help="Number of GMM clusters (only for gmm mode)"
-    )
-
-    parser.add_argument(
-        "--radius_weight",
-        type=float,
-        default=0.2,
-        help="Radius/thickness weight (only for gmm mode)"
-    )
+    parser.add_argument("--max_clusters", type=int, default=50, help="Max GMM components (gmm mode)")
+    parser.add_argument("--latent_amplify", type=float, default=5.0, help="Latent scale factor (gmm mode)")
+    parser.add_argument("--empty_percentile", type=float, default=15.0, help="Empty-image percentile (gmm mode)")
 
     args = parser.parse_args()
 
@@ -56,8 +46,9 @@ def main():
             [
                 sys.executable,
                 script,
-                "--clusters", str(args.clusters),
-                "--radius_weight", str(args.radius_weight),
+                "--max_clusters", str(args.max_clusters),
+                "--latent_amplify", str(args.latent_amplify),
+                "--empty_percentile", str(args.empty_percentile),
             ],
             check=True,
         )
