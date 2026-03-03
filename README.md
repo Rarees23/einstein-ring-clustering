@@ -10,7 +10,7 @@ This project implements a **research‑grade unsupervised pipeline**:
 
 1. **Convolutional Autoencoder (CAE)** learns compact latent representations of FITS images, focusing on Einstein ring structures.
 2. **Latent space extraction** converts images into fixed‑length feature vectors.
-3. **Gaussian Mixture Model (GMM)** clusters lenses in latent space, optionally augmented with a physical scalar (Einstein radius / thickness).
+3. **Gaussian Mixture Model (GMM)** clusters lenses **purely in latent space** (extension to include physical scalars such as Einstein radius / thickness is planned).
 4. **Evaluation & visualization** validate reconstruction quality and inspect cluster composition.
 
 The design cleanly separates:
@@ -95,9 +95,9 @@ python -m src gmm \
 
 Flags:
 
-- **--max_clusters**: maximum number of mixture components (Dirichlet process prior prunes unused ones)
-- **--latent_amplify**: global scaling factor for latent space before clustering
-- **--empty_percentile**: percentile over total image flux used to tag "empty" images (label `-1`)
+- **--max_clusters**: upper bound on the number of mixture components; a Dirichlet‑process prior prunes unused ones, so the *effective* number of clusters is learned from the data.
+- **--latent_amplify**: global scaling factor for latent space before clustering (helps emphasize structure in the latent space).
+- **--empty_percentile**: percentile over total image flux used to tag "empty" images (label `-1` in outputs).
 
 ### Test reconstructions
 

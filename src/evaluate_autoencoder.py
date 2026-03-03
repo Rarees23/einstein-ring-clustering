@@ -2,41 +2,49 @@ import os
 import numpy as np
 import torch
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from ConvolutionalAutoencoder import ConvAutoencoder
 from config import (
-    DATA_DIR, SAVED_MODELS_DIR, IMG_H, IMG_W, IN_CHANNELS, LATENT_DIM, DEVICE,
-    RECON_THRESHOLD, SHOW_FIRST_N, EVAL_OUTPUT_DIR,
+    DATA_DIR,
+    SAVED_MODELS_DIR,
+    IN_CHANNELS,
+    LATENT_DIM,
+    DEVICE,
+    RECON_THRESHOLD,
+    SHOW_FIRST_N,
+    EVAL_OUTPUT_DIR,
+    set_global_seed,
 )
 from preprocess import find_fits, load_fits_image, preprocess_image
 
-# ---------------- PATHS ----------------
-MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "best_model.pth")
-TEST_DIR = DATA_DIR
-SHOW_WORST_N = 5
 
-# ---------------- Metrics ----------------
 def masked_mse(output, target, mask_thresh=0.01):
-    mask = (target > mask_thresh)
+    mask = target > mask_thresh
     if mask.sum() == 0:
         return 0.0, mask.astype(np.uint8)
     masked_sq = ((output - target) ** 2) * mask
     return float(masked_sq.sum() / mask.sum()), mask.astype(np.uint8)
 
+
 def masked_psnr(mse_masked, max_val=1.0):
     return 10.0 * np.log10(max_val**2 / mse_masked) if mse_masked > 0 else float("inf")
 
+
 def fraction_reconstructed(output, target, recon_thresh=RECON_THRESHOLD, mask_thresh=0.01):
-    mask = (target > mask_thresh)
+    mask = target > mask_thresh
     if mask.sum() == 0:
         return 0.0
     recon_hits = ((output > recon_thresh) & mask).sum()
     return float(recon_hits) / float(mask.sum())
 
-def show_comparison_grid(orig_list, recon_list, residual_list, mask_list, filenames, title_suffix="", save_path=None):
+
+def show_comparison_grid(
+    orig_list, recon_list, residual_list, mask_list, filenames, title_suffix="", save_path=None
+):
     n = len(orig_list)
     fig, axes = plt.subplots(n, 4, figsize=(12, 3 * n))
     if n == 1:
@@ -68,126 +76,162 @@ def show_comparison_grid(orig_list, recon_list, residual_list, mask_list, filena
     else:
         plt.show()
 
-# ---------------- Load Model ----------------
-if not os.path.exists(MODEL_PATH):
-    raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
-model = ConvAutoencoder(in_channels=IN_CHANNELS, latent_dim=LATENT_DIM).to(DEVICE)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-model.eval()
+def main() -> None:
+    # Best-effort reproducibility
+    set_global_seed(42, deterministic_cudnn=False)
 
-# ---------------- Test Files ----------------
-fits_files = find_fits(TEST_DIR)
-if len(fits_files) == 0:
-    raise RuntimeError(f"No FITS files found in {TEST_DIR}")
+    # ---------------- PATHS ----------------
+    MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "best_model.pth")
+    TEST_DIR = DATA_DIR
+    SHOW_WORST_N = 5
 
-all_mse, all_psnr, all_frac = [], [], []
-all_paths = []
-grid_orig, grid_recon, grid_resid, grid_mask, grid_fnames = [], [], [], [], []
-worst_orig, worst_recon, worst_resid, worst_mask, worst_fnames = [], [], [], [], []
-latent_vectors = []
+    # ---------------- Load Model ----------------
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
-print(f"{'Image':<30} {'Masked MSE':>10} {'PSNR(dB)':>10} {'Frac Reconst':>13} {'Latent Dim':>12}")
-print("-" * 80)
+    model = ConvAutoencoder(in_channels=IN_CHANNELS, latent_dim=LATENT_DIM).to(DEVICE)
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.eval()
 
-for idx, path in enumerate(tqdm(fits_files, desc="Testing FITS")):
-    try:
-        raw = load_fits_image(path)
-    except Exception as e:
-        print(f"Skipping {path}: {e}")
-        continue
+    # ---------------- Test Files ----------------
+    fits_files = find_fits(TEST_DIR)
+    if len(fits_files) == 0:
+        raise RuntimeError(f"No FITS files found in {TEST_DIR}")
 
-    proc = preprocess_image(raw)
-    tensor = torch.tensor(proc[None], dtype=torch.float32).to(DEVICE)
+    all_mse, all_psnr, all_frac = [], [], []
+    all_paths = []
+    grid_orig, grid_recon, grid_resid, grid_mask, grid_fnames = [], [], [], [], []
+    worst_orig, worst_recon, worst_resid, worst_mask, worst_fnames = [], [], [], [], []
+    latent_vectors = []
 
-    with torch.no_grad():
-        recon = model(tensor).squeeze(0).cpu().numpy()
-        latent_tensor = model.encoder(tensor)
-        latent_vector = torch.flatten(latent_tensor, start_dim=1).squeeze(0).detach().cpu().numpy()
+    print(f"{'Image':<30} {'Masked MSE':>10} {'PSNR(dB)':>10} {'Frac Reconst':>13} {'Latent Dim':>12}")
+    print("-" * 80)
 
-    orig = proc[0]
-    recon_img = recon[0]
-    mse_masked, mask = masked_mse(recon_img, orig)
-    psnr_masked = masked_psnr(mse_masked)
-    frac = fraction_reconstructed(recon_img, orig)
-    residual = np.abs(orig - recon_img)
+    for idx, path in enumerate(tqdm(fits_files, desc="Testing FITS")):
+        try:
+            raw = load_fits_image(path)
+        except Exception as e:
+            print(f"Skipping {path}: {e}")
+            continue
 
-    print(f"{os.path.basename(path):<30} {mse_masked:10.6f} {psnr_masked:10.2f} {frac:13.4f} {latent_vector.shape[0]:12}")
-
-    all_mse.append(mse_masked)
-    all_psnr.append(psnr_masked)
-    all_frac.append(frac)
-    all_paths.append(path)
-    latent_vectors.append(latent_vector)
-
-    if idx < SHOW_FIRST_N:
-        grid_orig.append(orig)
-        grid_recon.append(recon_img)
-        grid_resid.append(residual)
-        grid_mask.append(mask)
-        grid_fnames.append(os.path.basename(path))
-
-# ---------------- Worst by MSE ----------------
-if len(all_mse) >= SHOW_WORST_N:
-    worst_indices = np.argsort(all_mse)[-SHOW_WORST_N:][::-1]
-    for i in worst_indices:
-        path = all_paths[i]
-        raw = load_fits_image(path)
         proc = preprocess_image(raw)
         tensor = torch.tensor(proc[None], dtype=torch.float32).to(DEVICE)
+
         with torch.no_grad():
             recon = model(tensor).squeeze(0).cpu().numpy()
+            latent_tensor = model.encoder(tensor)
+            latent_vector = (
+                torch.flatten(latent_tensor, start_dim=1).squeeze(0).detach().cpu().numpy()
+            )
+
         orig = proc[0]
         recon_img = recon[0]
-        _, mask = masked_mse(recon_img, orig)
+        mse_masked, mask = masked_mse(recon_img, orig)
+        psnr_masked = masked_psnr(mse_masked)
+        frac = fraction_reconstructed(recon_img, orig)
         residual = np.abs(orig - recon_img)
-        worst_orig.append(orig)
-        worst_recon.append(recon_img)
-        worst_resid.append(residual)
-        worst_mask.append(mask)
-        worst_fnames.append(f"{os.path.basename(path)} (MSE={all_mse[i]:.4f})")
 
-# ---------------- Save metrics ----------------
-os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
-metrics_path = os.path.join(EVAL_OUTPUT_DIR, "eval_metrics.npz")
-np.savez(
-    metrics_path,
-    paths=np.array(all_paths, dtype=object),
-    mse=np.array(all_mse),
-    psnr=np.array(all_psnr),
-    frac_reconstructed=np.array(all_frac),
-    latent_vectors=np.stack(latent_vectors),
-)
-print(f"\nMetrics saved to {metrics_path}")
+        print(
+            f"{os.path.basename(path):<30} {mse_masked:10.6f} {psnr_masked:10.2f} "
+            f"{frac:13.4f} {latent_vector.shape[0]:12}"
+        )
 
-# ---------------- Plots ----------------
-if grid_orig:
-    show_comparison_grid(
-        grid_orig, grid_recon, grid_resid, grid_mask, grid_fnames,
-        title_suffix="First N samples",
-        save_path=os.path.join(EVAL_OUTPUT_DIR, "eval_first_n.png"),
+        all_mse.append(mse_masked)
+        all_psnr.append(psnr_masked)
+        all_frac.append(frac)
+        all_paths.append(path)
+        latent_vectors.append(latent_vector)
+
+        if idx < SHOW_FIRST_N:
+            grid_orig.append(orig)
+            grid_recon.append(recon_img)
+            grid_resid.append(residual)
+            grid_mask.append(mask)
+            grid_fnames.append(os.path.basename(path))
+
+    # ---------------- Worst by MSE ----------------
+    if len(all_mse) >= SHOW_WORST_N:
+        worst_indices = np.argsort(all_mse)[-SHOW_WORST_N :][::-1]
+        for i in worst_indices:
+            path = all_paths[i]
+            raw = load_fits_image(path)
+            proc = preprocess_image(raw)
+            tensor = torch.tensor(proc[None], dtype=torch.float32).to(DEVICE)
+            with torch.no_grad():
+                recon = model(tensor).squeeze(0).cpu().numpy()
+            orig = proc[0]
+            recon_img = recon[0]
+            _, mask = masked_mse(recon_img, orig)
+            residual = np.abs(orig - recon_img)
+            worst_orig.append(orig)
+            worst_recon.append(recon_img)
+            worst_resid.append(residual)
+            worst_mask.append(mask)
+            worst_fnames.append(f"{os.path.basename(path)} (MSE={all_mse[i]:.4f})")
+
+    # ---------------- Save metrics ----------------
+    os.makedirs(EVAL_OUTPUT_DIR, exist_ok=True)
+    metrics_path = os.path.join(EVAL_OUTPUT_DIR, "eval_metrics.npz")
+    np.savez(
+        metrics_path,
+        paths=np.array(all_paths, dtype=object),
+        mse=np.array(all_mse),
+        psnr=np.array(all_psnr),
+        frac_reconstructed=np.array(all_frac),
+        latent_vectors=np.stack(latent_vectors),
     )
-if worst_orig:
-    show_comparison_grid(
-        worst_orig, worst_recon, worst_resid, worst_mask, worst_fnames,
-        title_suffix="Worst N by masked MSE",
-        save_path=os.path.join(EVAL_OUTPUT_DIR, "eval_worst_n.png"),
+    print(f"\nMetrics saved to {metrics_path}")
+
+    # ---------------- Plots ----------------
+    if grid_orig:
+        show_comparison_grid(
+            grid_orig,
+            grid_recon,
+            grid_resid,
+            grid_mask,
+            grid_fnames,
+            title_suffix="First N samples",
+            save_path=os.path.join(EVAL_OUTPUT_DIR, "eval_first_n.png"),
+        )
+    if worst_orig:
+        show_comparison_grid(
+            worst_orig,
+            worst_recon,
+            worst_resid,
+            worst_mask,
+            worst_fnames,
+            title_suffix="Worst N by masked MSE",
+            save_path=os.path.join(EVAL_OUTPUT_DIR, "eval_worst_n.png"),
+        )
+        print(f"Plots saved to {EVAL_OUTPUT_DIR}")
+
+    # ---------------- Latent Sanity Checks ----------------
+    latent_vectors = np.stack(latent_vectors)
+    latent_std_per_dim = latent_vectors.std(axis=0)
+
+    print("\n--- Latent Space Sanity Check ---")
+    print(f"Latent shape (num_images x dim): {latent_vectors.shape}")
+    print(f"Global latent mean: {latent_vectors.mean():.6f}")
+    print(f"Global latent std: {latent_vectors.std():.6f}")
+    print(f"Mean per-dim std: {latent_std_per_dim.mean():.6f}")
+    print(f"Min/Max per-dim std: {latent_std_per_dim.min():.6f}/{latent_std_per_dim.max():.6f}")
+
+    # ---------------- Summary ----------------
+    print("\nSummary Statistics for all images:")
+    print(
+        f"Masked MSE: mean={np.mean(all_mse):.6f}, median={np.median(all_mse):.6f}, "
+        f"std={np.std(all_mse):.6f}"
     )
-    print(f"Plots saved to {EVAL_OUTPUT_DIR}")
+    print(
+        f"Masked PSNR: mean={np.mean(all_psnr):.2f} dB, median={np.median(all_psnr):.2f} dB, "
+        f"std={np.std(all_psnr):.2f} dB"
+    )
+    print(
+        f"Fraction reconstructed: mean={np.mean(all_frac):.4f}, "
+        f"median={np.median(all_frac):.4f}, std={np.std(all_frac):.4f}"
+    )
 
-# ---------------- Latent Sanity Checks ----------------
-latent_vectors = np.stack(latent_vectors)
-latent_std_per_dim = latent_vectors.std(axis=0)
 
-print("\n--- Latent Space Sanity Check ---")
-print(f"Latent shape (num_images x dim): {latent_vectors.shape}")
-print(f"Global latent mean: {latent_vectors.mean():.6f}")
-print(f"Global latent std: {latent_vectors.std():.6f}")
-print(f"Mean per-dim std: {latent_std_per_dim.mean():.6f}")
-print(f"Min/Max per-dim std: {latent_std_per_dim.min():.6f}/{latent_std_per_dim.max():.6f}")
-
-# ---------------- Summary ----------------
-print("\nSummary Statistics for all images:")
-print(f"Masked MSE: mean={np.mean(all_mse):.6f}, median={np.median(all_mse):.6f}, std={np.std(all_mse):.6f}")
-print(f"Masked PSNR: mean={np.mean(all_psnr):.2f} dB, median={np.median(all_psnr):.2f} dB, std={np.std(all_psnr):.2f} dB")
-print(f"Fraction reconstructed: mean={np.mean(all_frac):.4f}, median={np.median(all_frac):.4f}, std={np.std(all_frac):.4f}")
+if __name__ == "__main__":
+    main()

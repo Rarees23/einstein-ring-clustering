@@ -1,4 +1,8 @@
 import os
+import random
+from typing import Optional
+
+import numpy as np
 import torch
 
 # ---------------- PATHS ----------------
@@ -32,11 +36,28 @@ SHOW_FIRST_N = 5         # for visualizing reconstructions during training
 
 # ---------------- GMM ----------------
 # cluster_gmm.py uses its own CLI (--max_clusters, --latent_amplify, --empty_percentile)
-# These are only used if something imports them; cluster_gmm does not.
-GMM_MAX_CLUSTERS = 50
+GMM_MAX_CLUSTERS = 25
 
 # ---------------- FILES ----------------
 GMM_MODEL_FILE = os.path.join(GMM_OUTPUT_DIR, "gmm_model.joblib")
 SCALER_FILE = os.path.join(GMM_OUTPUT_DIR, "scaler_latent.joblib")
 LATENTS_FILE = os.path.join(GMM_OUTPUT_DIR, "latents.npy")
 LABELS_FILE = os.path.join(GMM_OUTPUT_DIR, "labels.npy")
+
+
+def set_global_seed(seed: int = 42, deterministic_cudnn: bool = False) -> None:
+    """
+    Set best-effort global random seed for Python, NumPy, and PyTorch.
+
+    This is not a hard guarantee of full determinism (e.g. on different GPUs),
+    but it makes experiments more reproducible by default.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    if deterministic_cudnn:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
