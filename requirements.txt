@@ -13,3 +13,4 @@ h5py>=3.9
 jupyterlab>=4.3
 notebook>=7.4
 opencv-python>=4.9
+umap-learn>=0.5

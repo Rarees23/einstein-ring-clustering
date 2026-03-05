@@ -43,6 +43,7 @@ GMM_MODEL_FILE = os.path.join(GMM_OUTPUT_DIR, "gmm_model.joblib")
 SCALER_FILE = os.path.join(GMM_OUTPUT_DIR, "scaler_latent.joblib")
 LATENTS_FILE = os.path.join(GMM_OUTPUT_DIR, "latents.npy")
 LABELS_FILE = os.path.join(GMM_OUTPUT_DIR, "labels.npy")
+FILENAMES_FILE = os.path.join(GMM_OUTPUT_DIR, "filenames.npy")
 
 
 def set_global_seed(seed: int = 42, deterministic_cudnn: bool = False) -> None:

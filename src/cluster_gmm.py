@@ -67,7 +67,10 @@ def main() -> None:
         try:
             raw = load_fits_image(f)
             images.append(preprocess_image(raw))
-            filenames.append(os.path.basename(f))
+            # Store path relative to DATA_DIR so we can reconstruct it later,
+            # even if FITS files live in nested subfolders.
+            rel_path = os.path.relpath(f, DATA_DIR)
+            filenames.append(rel_path)
         except Exception as e:
             print(f"Skipping {f}: {e}")
 
@@ -145,6 +148,7 @@ def main() -> None:
     )
     np.save(os.path.join(OUT_DIR, "latents.npy"), latents)
     np.save(os.path.join(OUT_DIR, "labels.npy"), labels)
+    np.save(os.path.join(OUT_DIR, "filenames.npy"), np.array(filenames, dtype=object))
 
     print("Bayesian GMM clustering complete. Empty images = -1, max clusters =", MAX_CLUSTERS)
     print(Z_scaled.mean(), Z_scaled.std())
