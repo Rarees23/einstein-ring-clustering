@@ -15,30 +15,34 @@ This project implements a **research‑grade unsupervised pipeline**:
 
 The design cleanly separates:
 
-* reusable ML logic (`src/`)
+* reusable ML logic (`src/` — see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for packages and extension points)
 * trained models (`saved_models/`)
 * experiment outputs (`results/`)
 
+**Contributors:** the layout is meant so teams can change **data**, **model**, **training**, or **clustering** independently; the architecture doc maps each folder to “what to edit when…”.
+
 ---
 
-## Project Structure
+## Project Structure (high level)
 
 ```text
-Euclid/
-│
 ├── src/
-│   ├── __main__.py              # CLI entry point / dispatcher
-│   ├── autoencoder.py           # Convolutional autoencoder + training loop
-│   ├── cluster_gmm.py           # Bayesian GMM clustering in latent space
-│   ├── evaluate_autoencoder.py  # Reconstruction evaluation & metrics
-│   ├── visualize_clusters.py    # 2D PCA visualization of latent clusters
-│   ├── preprocess.py            # Shared FITS loading & preprocessing
-│   ├── run_inference.py         # Streamlit UI for interactive cluster browsing
-│
-├── data/                        # FITS images (not tracked)
-├── saved_models/                # Trained model weights
-├── results/                     # Clustering outputs, labels, plots
+│   ├── __main__.py          # CLI: python -m src <mode>
+│   ├── core/                # Runtime config, paths, manifests
+│   ├── data/                # FITS I/O, preprocess, splits, records
+│   ├── datasets/            # PreprocessedCatalog + PyTorch Dataset views
+│   ├── models/              # Autoencoder
+│   ├── training/            # Loss + training loop
+│   ├── features/            # Latent extraction (shared contract)
+│   ├── clustering/          # GMM + empty-image logic
+│   ├── evaluation/          # Metrics & optional viz
+│   ├── pipelines/           # Stage orchestration (train, gmm, eval, infer)
+│   └── apps/                # Streamlit UI
+├── data/                    # FITS images (not tracked)
+├── saved_models/            # Weights
+├── results/                 # GMM, eval, run manifests
 ├── requirements.txt
+├── docs/ARCHITECTURE.md     # Contributor-oriented package map
 └── README.md
 ```
 
@@ -111,10 +115,12 @@ python -m src test
 python -m src inference
 ```
 
-or equivalently:
+This runs `streamlit run` on `src/apps/run_inference.py` (requires `streamlit` — see `requirements.txt`).
+
+You can also run the app directly:
 
 ```bash
-streamlit run src/run_inference.py
+streamlit run src/apps/run_inference.py
 ```
 
 > `__main__.py` acts as a thin dispatcher so future UIs (GUI / web) can reuse the same logic.

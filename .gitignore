@@ -1,22 +1,73 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Data
-data/
-Train_fits/
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
 
-# Models
-saved_models/
+# Jupyter
+.ipynb_checkpoints/
+
+# --- Project: large / generated data (do not commit) ---
+# Leading "/" = repo root only — do not use bare `data/` or it ignores `src/data/`.
+/data/
+/data_euclid/
+/Train_fits/
+/Euclid_Lens_Dataset/
+# Archives & ad-hoc local copies of data (keep out of git)
+*.zip
+*.ZIP
+/data_extra/
+/data_scratch/
+
+*.fits
+*.fit
+*.fts
+
+# Trained weights & serialized ML artifacts
+/saved_models/
 *.pth
-
-# Results / outputs
-results/
+*.pt
+*.ckpt
 *.npy
+*.npz
 *.joblib
+*.h5
+*.hdf5
+
+# Run outputs
+/results/
 
 # OS / IDE
 .DS_Store
-.vscode/
+Thumbs.db
+
+# PyCharm
 .idea/
+
+# VS Code / Cursor: ignore local junk, allow shared *.json (e.g. settings)
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json

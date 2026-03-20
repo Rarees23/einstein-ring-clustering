@@ -1,69 +1,73 @@
-"""
-Entry point for the Euclid strong lens project.
+"""CLI for ``python -m src`` — thin dispatcher to pipelines."""
 
-Usage:
-  python -m src train_ae
-  python -m src gmm [--max_clusters 50] [--latent_amplify 5.0] [--empty_percentile 15.0]
-  python -m src test
-  python -m src inference
-"""
+from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
-import os
 
-SRC_DIR = os.path.dirname(__file__)
+from src.core.runtime import RuntimeConfig
+from src.data.euclid_to_data import main as euclid_to_data_cli_main
+from src.pipelines.cluster import run_cluster
+from src.pipelines.evaluate import run_evaluate
+from src.pipelines.train import run_train
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Run Euclid strong lens workflows"
-    )
 
+def main() -> None:
+    _cfg = RuntimeConfig.default()
+    parser = argparse.ArgumentParser(description="Run Euclid strong lens workflows")
     parser.add_argument(
         "mode",
-        choices=["train_ae", "gmm", "test", "inference"],
-        help="train_ae = train autoencoder | gmm = clustering | test = evaluation | inference = run clustering on new images"
+        choices=["train_ae", "gmm", "test", "inference", "euclid_to_data"],
+        help="train_ae | gmm | test | inference | euclid_to_data",
     )
-
-    parser.add_argument("--max_clusters", type=int, default=50, help="Max GMM components (gmm mode)")
+    parser.add_argument(
+        "--max_clusters",
+        type=int,
+        default=_cfg.gmm_max_clusters,
+        help="Max GMM components (gmm mode)",
+    )
     parser.add_argument("--latent_amplify", type=float, default=5.0, help="Latent scale factor (gmm mode)")
     parser.add_argument("--empty_percentile", type=float, default=15.0, help="Empty-image percentile (gmm mode)")
-
     args = parser.parse_args()
 
     if args.mode == "train_ae":
-        script = os.path.join(SRC_DIR, "autoencoder.py")
-        if not os.path.exists(script):
-            raise FileNotFoundError(f"Autoencoder script not found: {script}")
-        subprocess.run([sys.executable, script], check=True)
-
+        run_train()
     elif args.mode == "gmm":
-        script = os.path.join(SRC_DIR, "cluster_gmm.py")
-        if not os.path.exists(script):
-            raise FileNotFoundError(f"GMM clustering script not found: {script}")
-        subprocess.run(
+        run_cluster(
+            max_clusters=args.max_clusters,
+            latent_amplify=args.latent_amplify,
+            empty_percentile=args.empty_percentile,
+        )
+    elif args.mode == "test":
+        run_evaluate()
+    elif args.mode == "inference":
+        # Streamlit must be started with `streamlit run`, not plain Python.
+        app = os.path.join(os.path.dirname(__file__), "apps", "run_inference.py")
+        print(f"Launching Streamlit ({app})…", flush=True)
+        rc = subprocess.call(
             [
                 sys.executable,
-                script,
-                "--max_clusters", str(args.max_clusters),
-                "--latent_amplify", str(args.latent_amplify),
-                "--empty_percentile", str(args.empty_percentile),
-            ],
-            check=True,
+                "-m",
+                "streamlit",
+                "run",
+                app,
+                "--browser.gatherUsageStats",
+                "false",
+            ]
         )
-
-    elif args.mode == "test":
-        script = os.path.join(SRC_DIR, "evaluate_autoencoder.py")
-        if not os.path.exists(script):
-            raise FileNotFoundError(f"Evaluation script not found: {script}")
-        subprocess.run([sys.executable, script], check=True)
-
-    elif args.mode == "inference":
-        script = os.path.join(SRC_DIR, "run_inference.py")
-        if not os.path.exists(script):
-            raise FileNotFoundError(f"Inference script not found: {script}")
-        subprocess.run([sys.executable, script], check=True)
+        raise SystemExit(rc)
+    elif args.mode == "euclid_to_data":
+        argv = sys.argv[:]
+        for i, a in enumerate(argv[1:], start=1):
+            if a == "euclid_to_data":
+                sys.argv = [argv[0]] + argv[i + 1 :]
+                break
+        try:
+            euclid_to_data_cli_main()
+        finally:
+            sys.argv = argv
 
 
 if __name__ == "__main__":
