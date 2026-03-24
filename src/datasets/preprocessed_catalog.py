@@ -1,9 +1,4 @@
-"""
-Dataset-layer façade over ``src.data``: load, QC, splits, manifests, PyTorch datasets.
-
-Pipelines and training should depend on this module (or ``src.datasets``), not on
-``load_preprocessed_dataset`` / split helpers directly.
-"""
+"""In-memory catalog: call a ``PreprocessedDatasetSource``, then splits, QC, manifests, torch views."""
 
 from __future__ import annotations
 
@@ -12,18 +7,16 @@ from typing import Any
 
 import numpy as np
 
-from src.data.dataset import deterministic_split, leakage_guard, load_preprocessed_dataset, quality_report
+from src.data.dataset import PreprocessedDatasetSource
 from src.data.records import DatasetLoadRecord, records_to_manifest
+from src.datasets.qc import quality_report
+from src.datasets.splits import deterministic_split, leakage_guard
 from src.datasets.torch_datasets import PreprocessedImageDataset
 
 
 @dataclass
 class PreprocessedCatalog:
-    """
-    In-memory catalog of preprocessed FITS from a directory.
-
-    Built via :meth:`from_data_dir`, which delegates loading to ``src.data``.
-    """
+    """Holds ``(N,C,H,W)`` images, paths, and records; use ``load_catalog`` to construct."""
 
     images: np.ndarray
     filenames: list[str]
@@ -31,10 +24,10 @@ class PreprocessedCatalog:
     data_dir: str
 
     @classmethod
-    def from_data_dir(cls, data_dir: str) -> PreprocessedCatalog:
-        images, filenames, records = load_preprocessed_dataset(data_dir)
+    def from_data_dir(cls, data_dir: str, *, source: PreprocessedDatasetSource) -> PreprocessedCatalog:
+        images, filenames, records = source.load(data_dir)
         if images.size == 0:
-            raise RuntimeError(f"No usable FITS images found under {data_dir}")
+            raise RuntimeError(f"No usable images found under {data_dir}")
         return cls(
             images=images,
             filenames=filenames,
@@ -52,7 +45,6 @@ class PreprocessedCatalog:
         return sp
 
     def manifest_rows(self) -> list[dict[str, Any]]:
-        """Rows for ``write_dataset_manifest`` / JSON."""
         return records_to_manifest(self.records)
 
     def qc(self) -> dict[str, Any]:

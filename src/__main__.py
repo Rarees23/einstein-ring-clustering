@@ -1,4 +1,4 @@
-"""CLI for ``python -m src`` — thin dispatcher to pipelines."""
+"""``python -m src``: dispatch to train, gmm, eval, viz, streamlit, euclid_to_data."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import sys
 from src.core.runtime import RuntimeConfig
 from src.data.euclid_to_data import main as euclid_to_data_cli_main
 from src.pipelines.cluster import run_cluster
+from src.evaluation.visualize_reconstructions import run_reconstruction_viz
 from src.pipelines.evaluate import run_evaluate
 from src.pipelines.train import run_train
 
@@ -19,8 +20,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run Euclid strong lens workflows")
     parser.add_argument(
         "mode",
-        choices=["train_ae", "gmm", "test", "inference", "euclid_to_data"],
-        help="train_ae | gmm | test | inference | euclid_to_data",
+        choices=["train_ae", "gmm", "test", "recon_viz", "inference", "euclid_to_data"],
+        help="train_ae | gmm | test | recon_viz | inference | euclid_to_data",
     )
     parser.add_argument(
         "--max_clusters",
@@ -30,10 +31,71 @@ def main() -> None:
     )
     parser.add_argument("--latent_amplify", type=float, default=5.0, help="Latent scale factor (gmm mode)")
     parser.add_argument("--empty_percentile", type=float, default=15.0, help="Empty-image percentile (gmm mode)")
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=8,
+        help="recon_viz: number of random images to show (default 8)",
+    )
+    parser.add_argument(
+        "--split",
+        choices=["test", "val", "train"],
+        default="test",
+        help="recon_viz: which data split to sample from",
+    )
+    parser.add_argument(
+        "--lr",
+        type=float,
+        default=None,
+        help="train_ae: learning rate (default 1e-3)",
+    )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=None,
+        help="train_ae: early stopping patience in epochs (default: 6)",
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="train_ae: load weights from this .pth before training",
+    )
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="train_ae: adam, adamw, or sgd (default: config)",
+    )
+    parser.add_argument(
+        "--loss",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="train_ae: masked_mse or mse (default: config)",
+    )
     args = parser.parse_args()
 
     if args.mode == "train_ae":
-        run_train()
+        cfg = RuntimeConfig.default()
+        if args.lr is not None:
+            cfg.learning_rate = args.lr
+        if args.patience is not None:
+            cfg.early_stopping_patience = args.patience
+        if args.resume is not None:
+            cfg.resume_checkpoint_path = os.path.abspath(args.resume)
+        if args.optimizer is not None:
+            ok_o = {"adam", "adamw", "sgd"}
+            if args.optimizer.lower() not in ok_o:
+                raise SystemExit(f"--optimizer must be one of {sorted(ok_o)}")
+            cfg.optimizer_kind = args.optimizer.lower()
+        if args.loss is not None:
+            ok_l = {"masked_mse", "mse"}
+            if args.loss.lower() not in ok_l:
+                raise SystemExit(f"--loss must be one of {sorted(ok_l)}")
+            cfg.loss_kind = args.loss.lower()
+        run_train(cfg)
     elif args.mode == "gmm":
         run_cluster(
             max_clusters=args.max_clusters,
@@ -41,9 +103,11 @@ def main() -> None:
             empty_percentile=args.empty_percentile,
         )
     elif args.mode == "test":
-        run_evaluate()
+        metrics = run_evaluate()
+        print("Evaluation complete.", metrics, flush=True)
+    elif args.mode == "recon_viz":
+        run_reconstruction_viz(num_samples=args.num_samples, split=args.split)
     elif args.mode == "inference":
-        # Streamlit must be started with `streamlit run`, not plain Python.
         app = os.path.join(os.path.dirname(__file__), "apps", "run_inference.py")
         print(f"Launching Streamlit ({app})…", flush=True)
         rc = subprocess.call(

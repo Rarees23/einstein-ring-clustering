@@ -9,7 +9,7 @@ import torch
 
 from src.core.artifacts import build_artifact_paths
 from src.core.runtime import RuntimeConfig
-from src.datasets import PreprocessedCatalog
+from src.datasets import load_catalog
 from src.features.latent import LATENT_SCHEMA_VERSION, extract_latents
 from src.models.autoencoder_model import build_autoencoder
 
@@ -17,10 +17,10 @@ from src.models.autoencoder_model import build_autoencoder
 def infer_labels(data_dir: str, cfg: RuntimeConfig | None = None) -> dict[str, Any]:
     cfg = cfg or RuntimeConfig.default()
     artifact = build_artifact_paths(cfg)
-    catalog = PreprocessedCatalog.from_data_dir(data_dir)
+    catalog = load_catalog(cfg, data_dir=data_dir)
     images, filenames = catalog.images, catalog.filenames
 
-    model = build_autoencoder(cfg.in_channels, cfg.latent_dim, cfg.device)
+    model = build_autoencoder(cfg)
     model.load_state_dict(torch.load(artifact.model_path, map_location=cfg.device))
     model.eval()
 

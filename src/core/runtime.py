@@ -24,10 +24,16 @@ class RuntimeConfig:
     latent_dim: int = 64
     batch_size: int = 32
     num_epochs: int = 50
+    learning_rate: float = 1e-3
+    optimizer_kind: str = "adam"
+    loss_kind: str = "masked_mse"
+    early_stopping_patience: int = 6
+    resume_checkpoint_path: str | None = None
     seed: int = 42
     latent_schema_version: str = "pooled-v1"
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    # GMM / clustering defaults (single source for CLI + run_cluster)
+    dataset_kind: str = "fits"
+    model_kind: str = "conv_ae"
     gmm_max_clusters: int = 50
 
     @staticmethod

@@ -1,4 +1,4 @@
-"""PyTorch ``Dataset`` views — used by the dataset layer (not by pipelines directly, usually)."""
+"""torch.utils.data.Dataset wrappers over the in-memory (N,C,H,W) stack."""
 
 from __future__ import annotations
 
@@ -10,11 +10,7 @@ from torch.utils.data import Dataset
 
 
 class PreprocessedImageDataset(Dataset):
-    """
-    Random-access view over a preprocessed volume ``(N, C, H, W)`` in float32.
-
-    Use ``indices`` to attach a split (train/val/test) without copying image data.
-    """
+    """Index into a shared float32 NCHW array; ``indices`` selects train/val/test rows without copying."""
 
     def __init__(self, images: np.ndarray, indices: Sequence[int] | None = None) -> None:
         if images.ndim != 4:

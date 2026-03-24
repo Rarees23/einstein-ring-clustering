@@ -9,7 +9,7 @@ from astropy.io import fits
 import matplotlib.pyplot as plt
 
 # ----- Set your folder here (all .fits in this folder and subfolders will be shown) -----
-FOLDER = Path(__file__).resolve().parent / "Euclid_Lens_Dataset"
+FOLDER = Path(__file__).resolve().parent / "data"
 
 # Optional: set to a number to show only the first N images (e.g. 10); None = show all
 MAX_IMAGES = None

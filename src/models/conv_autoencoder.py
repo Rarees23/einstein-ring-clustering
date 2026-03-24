@@ -1,7 +1,12 @@
+import torch
 import torch.nn as nn
 
+from src.models.base import LatentReconstructionModel
 
-class ConvAutoencoder(nn.Module):
+
+class ConvAutoencoder(LatentReconstructionModel):
+    """Convolutional encoder–decoder with sigmoid output (pixel range [0, 1])."""
+
     def __init__(self, in_channels: int = 1, latent_dim: int = 64):
         super().__init__()
         self.encoder = nn.Sequential(
@@ -25,6 +30,5 @@ class ConvAutoencoder(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.decoder(self.encoder(x))
-

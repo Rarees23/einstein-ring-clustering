@@ -11,7 +11,7 @@ from src.clustering.service import detect_empty_images, fit_bgmm
 from src.core.artifacts import build_artifact_paths
 from src.core.manifest import write_dataset_manifest, write_run_manifest
 from src.core.runtime import RuntimeConfig, create_run_dir, ensure_runtime_dirs, set_global_seed, write_json
-from src.datasets import PreprocessedCatalog
+from src.datasets import load_catalog
 from src.features.latent import LATENT_SCHEMA_VERSION, extract_latents
 from src.models.autoencoder_model import build_autoencoder
 
@@ -30,7 +30,7 @@ def run_cluster(
     artifact = build_artifact_paths(cfg)
 
     print(f"[gmm] Loading data from {cfg.data_dir!r}…", flush=True)
-    catalog = PreprocessedCatalog.from_data_dir(cfg.data_dir)
+    catalog = load_catalog(cfg)
     print(f"[gmm] Loaded {catalog.images.shape[0]} images. Run directory: {run_dir}", flush=True)
     write_dataset_manifest(run_dir, catalog.manifest_rows())
     write_json(os.path.join(run_dir, "qc_report.json"), catalog.qc())
@@ -38,7 +38,7 @@ def run_cluster(
     images, filenames = catalog.images, catalog.filenames
     is_empty = detect_empty_images(images, empty_percentile)
 
-    model = build_autoencoder(cfg.in_channels, cfg.latent_dim, cfg.device)
+    model = build_autoencoder(cfg)
     print(f"[gmm] Loading weights from {artifact.model_path!r}…", flush=True)
     model.load_state_dict(torch.load(artifact.model_path, map_location=cfg.device))
     print("[gmm] Extracting latents…", flush=True)

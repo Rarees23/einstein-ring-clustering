@@ -1,37 +1,43 @@
 from __future__ import annotations
 
+import os
+
 import torch
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
-
-def mask_mse_loss(output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    # Higher weight on pixels that are above a small signal threshold.
-    mask = 0.1 + 0.9 * (target > 0.01).float()
-    return ((output - target) ** 2 * mask).mean()
+from src.training.losses import get_loss_fn
+from src.training.optimizers import build_optimizer
 
 
 def train_autoencoder_with_early_stopping(
     model: torch.nn.Module,
-    train_dataset: Dataset,
-    val_dataset: Dataset,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
     device: str,
     num_epochs: int,
-    batch_size: int,
     best_model_path: str,
+    *,
+    learning_rate: float = 1e-3,
+    optimizer_kind: str = "adam",
+    loss_kind: str = "masked_mse",
     patience: int = 6,
+    resume_checkpoint_path: str | None = None,
 ) -> tuple[float, list[float], list[float]]:
-    """
-    Train autoencoder with masked MSE loss and early stopping.
+    """AE training with early stopping on validation loss. Batches are NCHW float tensors."""
+    if resume_checkpoint_path:
+        if not os.path.isfile(resume_checkpoint_path):
+            raise FileNotFoundError(f"resume_checkpoint_path not found: {resume_checkpoint_path}")
+        state = torch.load(resume_checkpoint_path, map_location=device)
+        model.load_state_dict(state)
+        print(f"[train] Loaded weights from {resume_checkpoint_path!r}", flush=True)
 
-    ``train_dataset`` / ``val_dataset`` should yield image tensors shaped (C, H, W).
-
-    Returns:
-      best_val_loss, train_loss_history, val_loss_history
-    """
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    loss_fn = get_loss_fn(loss_kind)
+    optimizer = build_optimizer(optimizer_kind, model.parameters(), lr=learning_rate)
+    print(
+        f"[train] optimizer={optimizer_kind} loss={loss_kind} lr={learning_rate} "
+        f"early_stopping_patience={patience}",
+        flush=True,
+    )
 
     best_val = float("inf")
     stall = 0
@@ -44,12 +50,12 @@ def train_autoencoder_with_early_stopping(
         for x in train_loader:
             x = x.to(device)
             optimizer.zero_grad()
-            loss = mask_mse_loss(model(x), x)
+            loss = loss_fn(model(x), x)
             loss.backward()
             optimizer.step()
             total += loss.item() * x.size(0)
 
-        train_loss = total / max(1, len(train_dataset))
+        train_loss = total / max(1, len(train_loader.dataset))
         history_train.append(float(train_loss))
 
         model.eval()
@@ -57,8 +63,8 @@ def train_autoencoder_with_early_stopping(
         with torch.no_grad():
             for x in val_loader:
                 x = x.to(device)
-                vtotal += mask_mse_loss(model(x), x).item() * x.size(0)
-        val_loss = vtotal / max(1, len(val_dataset))
+                vtotal += loss_fn(model(x), x).item() * x.size(0)
+        val_loss = vtotal / max(1, len(val_loader.dataset))
         history_val.append(float(val_loss))
 
         print(
